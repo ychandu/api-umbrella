@@ -1,0 +1,225 @@
+diff --git a/ci/tsqa/tests/test_connect_attempts.py b/ci/tsqa/tests/test_connect_attempts.py
+index 58d70e1..231f94d 100644
+--- a/ci/tsqa/tests/test_connect_attempts.py
++++ b/ci/tsqa/tests/test_connect_attempts.py
+@@ -38,36 +38,6 @@ def thread_die_on_connect(sock):
+     sock.close()
+ 
+ 
+-def thread_delayed_accept_after_connect(sock):
+-    '''
+-    Thread to sleep a decreasing amount of time before requests
+-
+-    sleep times: 2 -> 1 -> 0
+-    '''
+-    sock.listen(0)
+-    sleep_time = 2
+-    num_requests = 0
+-    # poll
+-    while True:
+-        select.select([sock], [], [])
+-        time.sleep(sleep_time)
+-        try:
+-            connection, addr = sock.accept()
+-            connection.send((
+-                'HTTP/1.1 200 OK\r\n'
+-                'Content-Length: {body_len}\r\n'
+-                'Content-Type: text/html; charset=UTF-8\r\n'
+-                'Connection: close\r\n\r\n{body}'.format(body_len=len(str(num_requests)), body=num_requests)
+-            ))
+-            connection.close()
+-            num_requests += 1
+-        except Exception as e:
+-            print 'connection died!', e
+-            pass
+-        if sleep_time > 0:
+-            sleep_time -= 1
+-
+-
+ def thread_reset_after_accept(sock):
+     sock.listen(0)
+     first = True
+@@ -111,6 +81,36 @@ def thread_partial_response(sock):
+             connection.close()
+ 
+ 
++def thread_slow_response(sock):
++    '''
++    Thread to sleep a decreasing amount of time before sending the response
++
++    sleep times: 2 -> 1 -> 0
++    '''
++    sock.listen(0)
++    sleep_time = 2
++    num_requests = 0
++    # poll
++    while True:
++        select.select([sock], [], [])
++        try:
++            connection, addr = sock.accept()
++            time.sleep(sleep_time)
++            connection.send((
++                'HTTP/1.1 200 OK\r\n'
++                'Content-Length: {body_len}\r\n'
++                'Content-Type: text/html; charset=UTF-8\r\n'
++                'Connection: close\r\n\r\n{body}'.format(body_len=len(str(num_requests)), body=num_requests)
++            ))
++            connection.close()
++            num_requests += 1
++        except Exception as e:
++            print 'connection died!', e
++            pass
++        if sleep_time > 0:
++            sleep_time -= 1
++
++
+ class TestOriginServerConnectAttempts(helpers.EnvironmentCase):
+     @classmethod
+     def setUpEnv(cls, env):
+@@ -144,8 +144,8 @@ class TestOriginServerConnectAttempts(helpers.EnvironmentCase):
+         t.daemon = True
+         t.start()
+ 
+-        sock = _add_sock('delayed_accept_after_connect')
+-        t = threading.Thread(target=thread_delayed_accept_after_connect, args=(sock,))
++        sock = _add_sock('slow_response')
++        t = threading.Thread(target=thread_slow_response, args=(sock,))
+         t.daemon = True
+         t.start()
+ 
+@@ -200,12 +200,9 @@ class TestOriginServerConnectAttempts(helpers.EnvironmentCase):
+         ret = requests.get(url)
+         self.assertEqual(ret.status_code, 502)
+ 
+-    def test_delayed_accept_after_connect_origin(self):
+-        '''Verify that we get 200s from origins that delayed_accept_after_connect'''
+-        url = 'http://127.0.0.1:{0}/delayed_accept_after_connect/s'.format(self.configs['records.config']['CONFIG']['proxy.config.http.server_ports'])
++    def test_slow_response(self):
++        '''Verify that we get 5xx from origins that take longer than acceptable, since we will not retry them'''
++        url = 'http://127.0.0.1:{0}/slow_response/s'.format(self.configs['records.config']['CONFIG']['proxy.config.http.server_ports'])
+         ret = requests.get(url)
+         # make sure it worked
+-        self.assertEqual(ret.status_code, 200)
+-        # make sure its not the first one (otherwise the test messed up somehow)
+-        print ret.text
+-        self.assertGreater(int(ret.text), 0)
++        self.assertEqual(ret.status_code, 504)
+diff --git a/proxy/http/HttpSM.cc b/proxy/http/HttpSM.cc
+index a0e6ec3..7548291 100644
+--- a/proxy/http/HttpSM.cc
++++ b/proxy/http/HttpSM.cc
+@@ -5551,7 +5551,6 @@ HttpSM::do_setup_post_tunnel(HttpVC_t to_vc_type)
+     IOBufferReader *buf_start = post_buffer->alloc_reader();
+     int64_t post_bytes = chunked ? INT64_MAX : t_state.hdr_info.request_content_length;
+ 
+-    t_state.hdr_info.request_body_start = true;
+     // Note: Many browsers, Netscape and IE included send two extra
+     //  bytes (CRLF) at the end of the post.  We just ignore those
+     //  bytes since the sending them is not spec
+diff --git a/proxy/http/HttpTransact.cc b/proxy/http/HttpTransact.cc
+index 1d24e43..9870a81 100644
+--- a/proxy/http/HttpTransact.cc
++++ b/proxy/http/HttpTransact.cc
+@@ -3712,19 +3712,6 @@ HttpTransact::handle_response_from_server(State *s)
+     s->current.server->set_connect_fail(EUSERS); // too many users
+     handle_server_connection_not_open(s);
+     break;
+-  case CONNECTION_CLOSED:
+-  /* fall through */
+-  case PARSE_ERROR:
+-  /* fall through */
+-  case BAD_INCOMING_RESPONSE: {
+-    // this case should not be allowed to retry because we'll end up making another request
+-    DebugTxn("http_trans",
+-             "[handle_response_from_server] Transaction received a bad response or a partial response, not retrying...");
+-    SET_VIA_STRING(VIA_DETAIL_SERVER_CONNECT, VIA_DETAIL_SERVER_FAILURE);
+-    handle_server_died(s);
+-    s->next_action = SM_ACTION_SEND_ERROR_CACHE_NOOP;
+-    break;
+-  }
+   case OPEN_RAW_ERROR:
+   /* fall through */
+   case CONNECTION_ERROR:
+@@ -3732,19 +3719,38 @@ HttpTransact::handle_response_from_server(State *s)
+   case STATE_UNDEFINED:
+   /* fall through */
+   case INACTIVE_TIMEOUT:
++  /* fall through */
++  case PARSE_ERROR:
++  /* fall through */
++  case CONNECTION_CLOSED:
++  /* fall through */
++  case BAD_INCOMING_RESPONSE:
+     // Set to generic I/O error if not already set specifically.
+     if (!s->current.server->had_connect_fail())
+       s->current.server->set_connect_fail(EIO);
+ 
+     if (is_server_negative_cached(s)) {
++      DebugTxn("http_trans", "[handle_response_from_server] Error. is_server_negative_cached: true");
+       max_connect_retries = s->txn_conf->connect_attempts_max_retries_dead_server;
+     } else {
++      DebugTxn("http_trans", "[handle_response_from_server] Error. is_server_negative_cached: false");
+       // server not yet negative cached - use default number of retries
+       max_connect_retries = s->txn_conf->connect_attempts_max_retries;
+     }
+-    if (s->pCongestionEntry != NULL)
++    if (s->pCongestionEntry != NULL) {
++      DebugTxn("http_trans", "[handle_response_from_server] Error. pCongestionEntry: not null");
+       max_connect_retries = s->pCongestionEntry->connect_retries();
++    }
++
++    DebugTxn("http_trans", "[handle_response_from_server] Error. max_connect_retries: %d", max_connect_retries);
++    DebugTxn("http_trans", "[handle_response_from_server] Error. s->current.attempts: %d", s->current.attempts);
+ 
++    if (is_request_retryable(s)) {
++      DebugTxn("http_trans", "[handle_response_from_server] Error. is_request_retryable: true");
++    } else {
++      DebugTxn("http_trans", "[handle_response_from_server] Error. is_request_retryable: false");
++      DebugTxn("http_trans", "[handle_response_from_server] Error. s->state_machine->server_request_hdr_bytes: %d", s->state_machine->server_request_hdr_bytes);
++    }
+     if (is_request_retryable(s) && s->current.attempts < max_connect_retries) {
+       // If this is a round robin DNS entry & we're tried configured
+       //    number of times, we should try another node
+@@ -6465,13 +6471,17 @@ HttpTransact::is_request_valid(State *s, HTTPHdr *incoming_request)
+ 
+ // bool HttpTransact::is_request_retryable
+ //
+-//   If we started a POST/PUT tunnel then we can
+-//    not retry failed requests
++// In the general case once bytes have been sent on the wire the request cannot be retried.
++// The reason we cannot retry is that the rfc2616 does not make any gaurantees about the
++// retry-ability of a request. In fact in the reverse proxy case it is quite common for GET
++// requests on the origin to fire tracking events etc. So, as a proxy once we have sent bytes
++// on the wire to the server we cannot gaurantee that the request is safe to redispatch to another server.
+ //
+ bool
+ HttpTransact::is_request_retryable(State *s)
+ {
+-  if (s->hdr_info.request_body_start == true) {
++  // If the connection was established-- we cannot retry
++  if (s->state_machine->server_request_hdr_bytes > 0) {
+     return false;
+   }
+ 
+diff --git a/proxy/http/HttpTransact.h b/proxy/http/HttpTransact.h
+index dab0edd..b9c431e 100644
+--- a/proxy/http/HttpTransact.h
++++ b/proxy/http/HttpTransact.h
+@@ -797,7 +797,6 @@ public:
+     bool trust_response_cl;
+     ResponseError_t response_error;
+     bool extension_method;
+-    bool request_body_start;
+ 
+     _HeaderInfo()
+       : client_request(),
+@@ -813,8 +812,7 @@ public:
+         client_req_is_server_style(false),
+         trust_response_cl(false),
+         response_error(NO_RESPONSE_HEADER_ERROR),
+-        extension_method(false),
+-        request_body_start(false)
++        extension_method(false)
+     {
+     }
+   } HeaderInfo;

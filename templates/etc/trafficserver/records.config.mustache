@@ -87,6 +87,9 @@ CONFIG proxy.config.http.response_server_enabled INT 0
 # that each host gets cached separately.
 CONFIG proxy.config.url_remap.pristine_host_hdr INT 1
 
+CONFIG proxy.config.diags.debug.enabled INT 1
+CONFIG proxy.config.diags.debug.tags STRING debug-tag-name
+
 # Additional custom configuration
 {{#trafficserver.embedded_server_config.records}}
 {{.}}

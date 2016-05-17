@@ -134,7 +134,7 @@ describe('processes', function() {
 
               // Now check for open file descriptors.
               function(seriesNext) {
-                execFile('lsof', ['-R', '-c', 'nginx'], function(error, stdout, stderr) {
+                execFile('lsof', ['-n', '-P', '-l', '-R', '-c', 'nginx'], function(error, stdout, stderr) {
                   if(error) {
                     return seriesNext('Error gathering lsof details: ' + error.message + '\n\nSTDOUT: ' + stdout + '\n\nSTDERR:' + stderr);
                   }
@@ -390,7 +390,111 @@ describe('processes', function() {
       });
     });
 
-    it('does not drop connections during reloads', function(done) {
+    var j = -1;
+    for(var i = 0; i < 1000; i++) {
+    it('re-establishes connections from trafficserver to nginx when nginx closes keepalive connections' + i, function(done) {
+      j++;
+      console.info(j);
+      this.timeout(20000);
+
+      var parentPid;
+      var originalChildPids = [];
+      var execOpts = { env: processEnv.env() };
+
+      async.series([
+        function(callback) {
+          execFile('perpstat', ['-b', path.join(config.get('root_dir'), 'etc/perp'), 'nginx'], execOpts, function(error, stdout, stderr) {
+            if(error || !stdout) {
+              return callback('Error fetching nginx pid: ' + error + ' (STDOUT: ' + stdout + ', STDERR: ' + stderr + ')');
+            }
+
+            var match = stdout.match(/^\s*main:.*\(pid (\d+)\)\s*$/m);
+            if(!match) {
+              return callback('No PID returned for nginx (STDOUT: ' + stdout + ', STDERR: ' + stderr + ')');
+            }
+
+            parentPid = parseInt(match[1], 10);
+            callback();
+          });
+        },
+        function(callback) {
+          async.timesSeries(500, function(index, timesCallback) {
+            request.get('http://localhost:9080/db-config/hello?before&i=' + j + '&index=' + index +'&rand=' + process.hrtime().join('-') + '-' + Math.random(), this.options, function(error, response, body) {
+              should.not.exist(error);
+              response.statusCode.should.eql(200);
+              //body.should.eql('Hello World');
+
+              timesCallback(error);
+            });
+          }.bind(this), callback);
+        }.bind(this),
+        // Get the list of original nginx worker process PIDs on startup.
+        function(seriesNext) {
+          var expectedNumWorkers = config.get('nginx.workers');
+
+          async.doUntil(function(untilNext) {
+            execFile('pgrep', ['-P', parentPid], function(error, stdout, stderr) {
+              if(error || !stdout) {
+                return seriesNext('Error fetching nginx worker pids: ' + error + ' (STDOUT: ' + stdout + ', STDERR: ' + stderr + ')');
+              }
+
+              originalChildPids = stdout.trim().split('\n');
+              setTimeout(untilNext, 50);
+            });
+          }, function() {
+            return originalChildPids.length === expectedNumWorkers;
+          }, seriesNext);
+        },
+
+        // Send a reload signal to nginx.
+        function(seriesNext) {
+          execFile('kill', ['-HUP', parentPid], function(error, stdout, stderr) {
+            if(error) {
+              return seriesNext('Error reloading nginx: ' + error + ' (STDOUT: ' + stdout + ', STDERR: ' + stderr + ')');
+            }
+
+            seriesNext();
+          });
+        },
+
+        // After sending the reload signal, wait until only the new set
+        // of worker processes is running. This prevents us from checking
+        // file descriptors when some of the old worker processes are
+        // still alive, but in the process of shutting down.
+        function(seriesNext) {
+          var newChildPids = [];
+          var expectedNumWorkers = config.get('nginx.workers');
+
+          async.doUntil(function(untilNext) {
+            execFile('pgrep', ['-P', parentPid], function(error, stdout, stderr) {
+              if(error || !stdout) {
+                return seriesNext('Error fetching nginx worker pids: ' + error + ' (STDOUT: ' + stdout + ', STDERR: ' + stderr + ')');
+              }
+
+              newChildPids = stdout.trim().split('\n');
+              setTimeout(untilNext, 50);
+            });
+          }, function() {
+            return _.intersection(newChildPids, originalChildPids).length === 0 && newChildPids.length === expectedNumWorkers;
+          }, seriesNext);
+        },
+        function(callback) {
+          async.timesSeries(500, function(index, timesCallback) {
+            request.get('http://localhost:9080/db-config/hello?after&i=' + j + '&index=' + index + '&rand=' + process.hrtime().join('-') + '-' + Math.random(), this.options, function(error, response, body) {
+              should.not.exist(error);
+              response.statusCode.should.eql(200);
+              //body.should.eql('Hello World');
+
+              timesCallback(error);
+            });
+          }.bind(this), callback);
+        }.bind(this),
+      ], done);
+    });
+    }
+
+    for(var i = 0; i < 1000; i++) {
+    it('does not drop connections during reloads' + i, function(done) {
       this.timeout(60000);
 
       var execOpts = { env: processEnv.env() };
@@ -442,17 +546,17 @@ describe('processes', function() {
               if(runTests) {
                 shared.runCommand(['reload', '--router'], whilstCallback);
               }
-            }, _.random(5, 500));
+            }, _.random(200, 500));
           }, function(error) {
             should.not.exist(error);
           });
 
           // Constantly make requests.
           async.whilst(function() { return runTests; }, function(whilstCallback) {
-            request.get('http://localhost:9080/db-config/hello', this.options, function(error, response, body) {
+            request.get('http://localhost:9080/db-config/hello?' + process.hrtime().join('-') + '-' + Math.random(), this.options, function(error, response, body) {
               should.not.exist(error);
               response.statusCode.should.eql(200);
-              body.should.eql('Hello World');
+              //body.should.eql('Hello World');
 
               whilstCallback(error);
             });
@@ -481,5 +585,6 @@ describe('processes', function() {
         done();
       });
     });
+    }
   });
 });
