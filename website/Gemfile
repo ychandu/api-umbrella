@@ -15,5 +15,5 @@ gem "middleman-gh-pages", "~> 0.3.1"
 gem "kramdown", "~> 1.13.2"
 
 # Assets
-gem "bootstrap-sass", "~> 3.3.7"
+gem "bootstrap-sass", "~> 3.4.0"
 gem "font-awesome-sass", "~> 4.7.0"
