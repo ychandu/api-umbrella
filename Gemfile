@@ -51,13 +51,13 @@ gem "addressable", "~> 2.5.1"
 gem "capybara", "~> 2.14.4"
 # Use fork to fix failure messages:
 # https://github.com/wojtekmach/minitest-capybara/pull/17
-gem "minitest-capybara", "~> 0.8.2", :git => "https://github.com/GUI/minitest-capybara.git"
+gem "minitest-capybara", "~> 0.8.2"
 
 # Webkit-based driver for capybara
 gem "poltergeist", "~> 1.15.0"
 
 # Take screenshots on capybara test failures
-gem "capybara-screenshot", "~> 1.0.14"
+gem "capybara-screenshot", "~> 1.0.16"
 
 # HTML or XML parsing
 gem "nokogiri", "~> 1.8.1"
