@@ -1,6 +1,6 @@
 source "https://rubygems.org"
 
-gem "rake", "~> 12.0.0"
+gem "rake", "~> 12.3.3"
 
 # Tests
 gem "minitest", "~> 5.10.1"
@@ -51,7 +51,7 @@ gem "addressable", "~> 2.5.1"
 gem "capybara", "~> 2.14.4"
 # Use fork to fix failure messages:
 # https://github.com/wojtekmach/minitest-capybara/pull/17
-gem "minitest-capybara", "~> 0.8.2", :git => "https://github.com/GUI/minitest-capybara.git"
+gem "minitest-capybara", "~> 0.8.2"
 
 # Webkit-based driver for capybara
 gem "poltergeist", "~> 1.15.0"
@@ -81,7 +81,7 @@ gem "zonebie", "~> 0.6.1"
 gem "bcrypt", "~> 3.1.11"
 
 # Color output
-gem "rainbow", "~> 2.2.1"
+gem "rainbow", "~> 2.2.2"
 
 # Debug printing
 gem "awesome_print", "~> 1.8.0"
