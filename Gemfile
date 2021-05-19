@@ -57,10 +57,10 @@ gem "minitest-capybara", "~> 0.8.2", :git => "https://github.com/GUI/minitest-ca
 gem "poltergeist", "~> 1.15.0"
 
 # Take screenshots on capybara test failures
-gem "capybara-screenshot", "~> 1.0.14"
+gem "capybara-screenshot", "~> 1.0.16"
 
 # HTML or XML parsing
-gem "nokogiri", "~> 1.8.1"
+gem "nokogiri", "~> 1.11.4"
 
 # Useful additions
 gem "activesupport", "~> 5.1.2"
