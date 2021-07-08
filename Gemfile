@@ -45,7 +45,7 @@ gem "database_cleaner", "~> 1.6.1"
 gem "rails_compatible_cookies_utils", "~> 0.1.0"
 
 # URL parsing/generation
-gem "addressable", "~> 2.5.1"
+gem "addressable", "~> 2.8.0"
 
 # Browser/JavaScript integration tests
 gem "capybara", "~> 2.14.4"
@@ -57,7 +57,7 @@ gem "minitest-capybara", "~> 0.8.2", :git => "https://github.com/GUI/minitest-ca
 gem "poltergeist", "~> 1.15.0"
 
 # Take screenshots on capybara test failures
-gem "capybara-screenshot", "~> 1.0.14"
+gem "capybara-screenshot", "~> 1.0.16"
 
 # HTML or XML parsing
 gem "nokogiri", "~> 1.8.1"
